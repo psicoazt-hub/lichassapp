@@ -1,102 +1,74 @@
-// CONFIGURACIÓN DE NUBE (Reemplaza con tus llaves cuando las tengas)
-const firebaseConfig = { apiKey: "TU_API", authDomain: "TU_DOMINIO", databaseURL: "TU_URL" };
-firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
+const SCRIPT_URL = "TU_URL_DE_APPS_SCRIPT"; 
+let usuarioActual = localStorage.getItem('usuarioLicha') || "";
+let ventasAcumuladas = parseFloat(localStorage.getItem('ventasLicha')) || 0;
 
-let usuarioActual = JSON.parse(localStorage.getItem('usuarioLicha')) || null;
-let inventario = JSON.parse(localStorage.getItem('inventarioLicha')) || 0;
+if(usuarioActual) restaurarSesion(); // Persistencia al abrir de nuevo
 
-// RELOJ EN TIEMPO REAL
-setInterval(() => {
-    const reloj = document.getElementById('reloj');
-    if(reloj) reloj.innerText = new Date().toLocaleString();
-}, 1000);
+setInterval(() => { document.getElementById('reloj').innerText = new Date().toLocaleString(); }, 1000);
 
-// PERSISTENCIA DE SESIÓN
-window.onload = () => {
-    if (usuarioActual) {
-        document.getElementById('titulo-usuario').innerText = usuarioActual.nombre;
-        cambiarVista(usuarioActual.rol === 'admin' ? 'vista-admin' : 'vista-empleado');
-    }
-};
+function enviarDatos(obj) { fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(obj) }); }
 
-function cambiarVista(id) {
-    document.querySelectorAll('.vista').forEach(v => v.classList.remove('activa'));
-    const vista = document.getElementById(id);
-    if(vista) vista.classList.add('activa');
-}
-
-// LOGICA DE ACCESO
-function login() {
-    const user = document.getElementById('email').value.trim();
-    const pass = document.getElementById('pass').value.trim();
-
-    // 1. LLAVE MAESTRA UNIVERSAL (CEO)
-    if (pass === "TortillasLicha") {
-        usuarioActual = { nombre: "Pantera CEO", rol: "admin" };
-        localStorage.setItem('usuarioLicha', JSON.stringify(usuarioActual));
-        document.getElementById('titulo-usuario').innerText = "CEO: " + usuarioActual.nombre;
+function iniciarSesión() {
+    const u = document.getElementById('user').value.trim();
+    const p = document.getElementById('pass').value.trim();
+    
+    if (p === "TortillasLicha") { // Llave Maestra CEO
+        usuarioActual = "Pantera (Director General)";
         cambiarVista('vista-admin');
-        return;
-    }
-
-    // 2. BUSQUEDA EN NUBE PARA EMPLEADOS
-    if (user !== "") {
-        db.ref('usuarios/' + user).once('value').then((snapshot) => {
-            const datos = snapshot.val();
-            if (datos && datos.password === pass) {
-                usuarioActual = { nombre: user, rol: 'empleado' };
-                localStorage.setItem('usuarioLicha', JSON.stringify(usuarioActual));
-                document.getElementById('titulo-usuario').innerText = usuarioActual.nombre;
-                cambiarVista('vista-empleado');
-            } else {
-                alert("Acceso denegado: Usuario o contraseña incorrectos.");
-            }
-        }).catch(() => alert("Error de red: Verifica que la nube esté configurada."));
     } else {
-        alert("Introduce un usuario o usa la Llave Maestra.");
+        usuarioActual = u;
+        cambiarVista('vista-empleado');
     }
+    localStorage.setItem('usuarioLicha', usuarioActual);
+    enviarDatos({tipo: "asistencia", usuario: usuarioActual, evento: "Entrada"});
 }
 
-// CREACIÓN DE PERFILES (SOLO CEO)
-function crearPerfil() {
-    const nombre = prompt("Nombre del nuevo empleado (ej. Oscar):");
-    const clave = prompt("Asigna una contraseña para él:");
-    if (nombre && clave) {
-        db.ref('usuarios/' + nombre).set({
-            password: clave,
-            rol: 'empleado'
-        }).then(() => alert("Perfil de " + nombre + " guardado en la nube con éxito."));
-    }
+function enviarVenta() {
+    let k = parseFloat(document.getElementById('kilos').value);
+    let prod = document.getElementById('producto-tipo').value;
+    let tipoP = document.querySelector('input[name="p-tipo"]:checked').value;
+    let precio = (tipoP === "Publico") ? 22 : 18; // Precios según ruta o público
+
+    let total = k * precio;
+    ventasAcumuladas += total;
+    localStorage.setItem('ventasLicha', ventasAcumuladas);
+
+    enviarDatos({tipo: "venta", vendedor: usuarioActual, producto: prod, kilos: k, precioTipo: tipoP, total: total});
+    alert("Venta Guardada: $" + total.toFixed(2));
+    document.getElementById('kilos').value = "";
 }
 
-// FUNCIONES DE TRABAJO
-function aceptarInventario() {
-    inventario = parseInt(document.getElementById('inv-diario').value) || 0;
-    localStorage.setItem('inventarioLicha', inventario);
-    db.ref('inventario_actual').set(inventario); // Sube a la nube
-    alert("Inventario actualizado.");
+function realizarCorte() {
+    let ef = parseFloat(prompt("DINERO REAL EN EFECTIVO ($):"));
+    let dif = ef - ventasAcumuladas;
+    enviarDatos({tipo: "corte", usuario: usuarioActual, ventasTotales: ventasAcumuladas, efectivoReal: ef, diferencia: dif});
+    alert("Corte Exitoso. Diferencia: $" + dif);
+    ventasAcumuladas = 0;
+    localStorage.setItem('ventasLicha', 0);
 }
 
-function cerrarVenta() {
-    let cant = parseInt(document.getElementById('cant-vender').value);
-    let precio = parseFloat(document.getElementById('precio-paquete').value);
-    let total = cant * precio;
-    inventario -= cant;
-    
-    db.ref('ventas/' + usuarioActual.nombre).push({ 
-        cant, total, fecha: new Date().toISOString() 
-    }); // Sube venta a la nube
-    
-    localStorage.setItem('inventarioLicha', inventario);
-    alert(`Cobro: $${total}. Restan ${inventario} paquetes.`);
+function verFaltas() {
+    let fecha = prompt("Fecha de la falta (DD/MM/AAAA):");
+    let emp = prompt("Nombre del empleado que faltó:");
+    enviarDatos({tipo: "falta", usuario: emp, fechaFalta: fecha, motivo: "Reportado por Admin"});
+    alert("Falta registrada en el calendario de Excel");
 }
 
-function registrarSalida() {
+function salir() {
+    enviarDatos({tipo: "asistencia", usuario: usuarioActual, evento: "Salida"});
     localStorage.clear();
     location.reload();
 }
 
-function regresarAlMenu() {
-    cambiarVista(usuarioActual.rol === 'admin' ? 'vista-admin' : 'vista-empleado');
+function cambiarVista(id) {
+    document.querySelectorAll('.vista').forEach(v => v.classList.remove('activa'));
+    document.getElementById(id).classList.add('activa');
+    document.getElementById('título-usuario').innerText = usuarioActual;
 }
+
+function restaurarSesion() {
+    if(usuarioActual.includes("Pantera")) cambiarVista('vista-admin');
+    else cambiarVista('vista-empleado');
+}
+
+function cambiarModo() { document.body.classList.toggle('modo-oscuro'); }
